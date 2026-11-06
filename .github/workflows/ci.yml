@@ -24,4 +24,8 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go vet ./...
+      - name: sqlc output is up to date
+        run: |
+          go tool sqlc generate
+          git diff --exit-code -- internal/db/dbgen
       - run: go test ./...

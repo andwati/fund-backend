@@ -1,0 +1,17 @@
+version: "2"
+sql:
+  - engine: postgresql
+    schema: internal/db/migrations
+    queries: internal/db/queries
+    gen:
+      go:
+        package: dbgen
+        out: internal/db/dbgen
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_empty_slices: true
+        overrides:
+          # Dates travel as YYYY-MM-DD strings, like the web app. Nullable date columns are
+          # selected as COALESCE(col::text, '') so "" means no date (never scan NULL into string).
+          - db_type: date
+            go_type: string
