@@ -293,9 +293,10 @@ func (q *Queries) ListActiveItemNames(ctx context.Context, fundID string) ([]Lis
 const listAllocationsForFund = `-- name: ListAllocationsForFund :many
 SELECT a.id, a.contribution_id, a.item_id, a.amount
 FROM allocation a JOIN contribution c ON c.id = a.contribution_id
-WHERE c.fund_id = $1 ORDER BY a.contribution_id, a.id
+WHERE c.fund_id = $1 ORDER BY a.contribution_id, a.ctid
 `
 
+// Lines come back in insertion order (physical row order), like the web app's unordered select.
 func (q *Queries) ListAllocationsForFund(ctx context.Context, fundID string) ([]Allocation, error) {
 	rows, err := q.db.Query(ctx, listAllocationsForFund, fundID)
 	if err != nil {
@@ -323,7 +324,7 @@ func (q *Queries) ListAllocationsForFund(ctx context.Context, fundID string) ([]
 
 const listContributionAllocations = `-- name: ListContributionAllocations :many
 SELECT id, contribution_id, item_id, amount FROM allocation
-WHERE contribution_id = $1 ORDER BY id
+WHERE contribution_id = $1 ORDER BY ctid
 `
 
 func (q *Queries) ListContributionAllocations(ctx context.Context, contributionID string) ([]Allocation, error) {

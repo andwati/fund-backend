@@ -66,9 +66,10 @@ SELECT id, date::text AS date, note, kind, created_at
 FROM contribution WHERE fund_id = $1 ORDER BY date, created_at, id;
 
 -- name: ListAllocationsForFund :many
+-- Lines come back in insertion order (physical row order), like the web app's unordered select.
 SELECT a.id, a.contribution_id, a.item_id, a.amount
 FROM allocation a JOIN contribution c ON c.id = a.contribution_id
-WHERE c.fund_id = $1 ORDER BY a.contribution_id, a.id;
+WHERE c.fund_id = $1 ORDER BY a.contribution_id, a.ctid;
 
 -- name: GetContribution :one
 SELECT id, fund_id, date::text AS date, note, kind, created_at
@@ -76,7 +77,7 @@ FROM contribution WHERE id = $1;
 
 -- name: ListContributionAllocations :many
 SELECT id, contribution_id, item_id, amount FROM allocation
-WHERE contribution_id = $1 ORDER BY id;
+WHERE contribution_id = $1 ORDER BY ctid;
 
 -- name: InsertContribution :exec
 INSERT INTO contribution (id, fund_id, date, note, kind)

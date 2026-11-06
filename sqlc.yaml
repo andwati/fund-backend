@@ -3,6 +3,7 @@ sql:
   - engine: postgresql
     schema: internal/db/migrations
     queries: internal/db/queries
+    strict_order_by: false # allows ORDER BY ctid (insertion order of allocation lines)
     gen:
       go:
         package: dbgen
