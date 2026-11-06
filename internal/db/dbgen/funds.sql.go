@@ -110,6 +110,20 @@ func (q *Queries) DeleteSkipsBefore(ctx context.Context, arg DeleteSkipsBeforePa
 	return err
 }
 
+const disableReminder = `-- name: DisableReminder :exec
+UPDATE fund_reminder_pref SET enabled = false WHERE fund_id = $1 AND user_id = $2
+`
+
+type DisableReminderParams struct {
+	FundID string
+	UserID string
+}
+
+func (q *Queries) DisableReminder(ctx context.Context, arg DisableReminderParams) error {
+	_, err := q.db.Exec(ctx, disableReminder, arg.FundID, arg.UserID)
+	return err
+}
+
 const getFund = `-- name: GetFund :one
 SELECT id, user_id, name, pace, currency, timezone, timezone_confirmed,
        onboarding_completed, created_at

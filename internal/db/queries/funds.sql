@@ -130,3 +130,6 @@ UNION ALL
 SELECT f.id, f.name, f.user_id, f.created_at, m.role, 1 AS ord
 FROM fund_member m JOIN fund f ON f.id = m.fund_id WHERE m.user_id = $1
 ORDER BY ord, created_at, id;
+
+-- name: DisableReminder :exec
+UPDATE fund_reminder_pref SET enabled = false WHERE fund_id = $1 AND user_id = $2;
