@@ -111,7 +111,7 @@ func (q *Queries) GetContribution(ctx context.Context, id string) (GetContributi
 
 const getItem = `-- name: GetItem :one
 SELECT id, fund_id, name, price, deadline::text AS deadline, plan_start::text AS plan_start,
-       "position", archived_at, actual_price, COALESCE(purchased_on::text, '') AS purchased_on, created_at
+       "position", archived_at, actual_price, COALESCE(purchased_on::text, '')::text AS purchased_on, created_at
 FROM item WHERE id = $1 AND fund_id = $2
 `
 
@@ -130,7 +130,7 @@ type GetItemRow struct {
 	Position    int32
 	ArchivedAt  pgtype.Timestamptz
 	ActualPrice *int32
-	PurchasedOn interface{}
+	PurchasedOn string
 	CreatedAt   pgtype.Timestamptz
 }
 
@@ -151,6 +151,17 @@ func (q *Queries) GetItem(ctx context.Context, arg GetItemParams) (GetItemRow, e
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const getItemName = `-- name: GetItemName :one
+SELECT name FROM item WHERE id = $1
+`
+
+func (q *Queries) GetItemName(ctx context.Context, id string) (string, error) {
+	row := q.db.QueryRow(ctx, getItemName, id)
+	var name string
+	err := row.Scan(&name)
+	return name, err
 }
 
 const insertAllocation = `-- name: InsertAllocation :exec
@@ -224,6 +235,59 @@ func (q *Queries) InsertItem(ctx context.Context, arg InsertItemParams) error {
 		arg.PlanStart,
 	)
 	return err
+}
+
+const listActiveItemIDs = `-- name: ListActiveItemIDs :many
+SELECT id FROM item WHERE fund_id = $1 AND archived_at IS NULL ORDER BY "position", created_at, id
+`
+
+func (q *Queries) ListActiveItemIDs(ctx context.Context, fundID string) ([]string, error) {
+	rows, err := q.db.Query(ctx, listActiveItemIDs, fundID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listActiveItemNames = `-- name: ListActiveItemNames :many
+SELECT id, name FROM item WHERE fund_id = $1 AND archived_at IS NULL ORDER BY "position", created_at, id
+`
+
+type ListActiveItemNamesRow struct {
+	ID   string
+	Name string
+}
+
+func (q *Queries) ListActiveItemNames(ctx context.Context, fundID string) ([]ListActiveItemNamesRow, error) {
+	rows, err := q.db.Query(ctx, listActiveItemNames, fundID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveItemNamesRow{}
+	for rows.Next() {
+		var i ListActiveItemNamesRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAllocationsForFund = `-- name: ListAllocationsForFund :many
@@ -326,9 +390,39 @@ func (q *Queries) ListContributions(ctx context.Context, fundID string) ([]ListC
 	return items, nil
 }
 
+const listFundItemsForContribution = `-- name: ListFundItemsForContribution :many
+SELECT id, name, (archived_at IS NOT NULL)::bool AS archived FROM item WHERE fund_id = $1
+`
+
+type ListFundItemsForContributionRow struct {
+	ID       string
+	Name     string
+	Archived bool
+}
+
+func (q *Queries) ListFundItemsForContribution(ctx context.Context, fundID string) ([]ListFundItemsForContributionRow, error) {
+	rows, err := q.db.Query(ctx, listFundItemsForContribution, fundID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFundItemsForContributionRow{}
+	for rows.Next() {
+		var i ListFundItemsForContributionRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Archived); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listItems = `-- name: ListItems :many
 SELECT id, name, price, deadline::text AS deadline, plan_start::text AS plan_start,
-       "position", archived_at, actual_price, COALESCE(purchased_on::text, '') AS purchased_on, created_at
+       "position", archived_at, actual_price, COALESCE(purchased_on::text, '')::text AS purchased_on, created_at
 FROM item WHERE fund_id = $1 ORDER BY "position", created_at, id
 `
 
@@ -341,7 +435,7 @@ type ListItemsRow struct {
 	Position    int32
 	ArchivedAt  pgtype.Timestamptz
 	ActualPrice *int32
-	PurchasedOn interface{}
+	PurchasedOn string
 	CreatedAt   pgtype.Timestamptz
 }
 
@@ -419,10 +513,58 @@ func (q *Queries) ListLedgerLines(ctx context.Context, fundID string) ([]ListLed
 	return items, nil
 }
 
-const maxItemPosition = `-- name: MaxItemPosition :one
-SELECT COALESCE(max("position"), -1)::int FROM item WHERE fund_id = $1 AND archived_at IS NULL
+const listLedgerLinesForItems = `-- name: ListLedgerLinesForItems :many
+SELECT c.id AS contribution_id, a.item_id, c.date::text AS date, c.kind, a.amount, c.created_at
+FROM allocation a JOIN contribution c ON c.id = a.contribution_id
+WHERE c.fund_id = $1 AND a.item_id = ANY($2::text[])
 `
 
+type ListLedgerLinesForItemsParams struct {
+	FundID  string
+	ItemIds []string
+}
+
+type ListLedgerLinesForItemsRow struct {
+	ContributionID string
+	ItemID         string
+	Date           string
+	Kind           string
+	Amount         int32
+	CreatedAt      pgtype.Timestamptz
+}
+
+func (q *Queries) ListLedgerLinesForItems(ctx context.Context, arg ListLedgerLinesForItemsParams) ([]ListLedgerLinesForItemsRow, error) {
+	rows, err := q.db.Query(ctx, listLedgerLinesForItems, arg.FundID, arg.ItemIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLedgerLinesForItemsRow{}
+	for rows.Next() {
+		var i ListLedgerLinesForItemsRow
+		if err := rows.Scan(
+			&i.ContributionID,
+			&i.ItemID,
+			&i.Date,
+			&i.Kind,
+			&i.Amount,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const maxItemPosition = `-- name: MaxItemPosition :one
+SELECT COALESCE(max("position"), 0)::int FROM item WHERE fund_id = $1
+`
+
+// Web parity: new position = max(0, max over ALL items) + 1, so the first item gets 1.
 func (q *Queries) MaxItemPosition(ctx context.Context, fundID string) (int32, error) {
 	row := q.db.QueryRow(ctx, maxItemPosition, fundID)
 	var column_1 int32
@@ -553,5 +695,22 @@ func (q *Queries) UpdateItem(ctx context.Context, arg UpdateItemParams) error {
 		arg.Deadline,
 		arg.PlanStart,
 	)
+	return err
+}
+
+const updateItemsPlanStart = `-- name: UpdateItemsPlanStart :exec
+UPDATE item SET plan_start = $2::date
+WHERE fund_id = $1 AND archived_at IS NULL
+  AND plan_start < $2::date AND deadline >= $2::date
+`
+
+type UpdateItemsPlanStartParams struct {
+	FundID string
+	Today  string
+}
+
+// A new payday schedule applies from today: active items start their plan now.
+func (q *Queries) UpdateItemsPlanStart(ctx context.Context, arg UpdateItemsPlanStartParams) error {
+	_, err := q.db.Exec(ctx, updateItemsPlanStart, arg.FundID, arg.Today)
 	return err
 }

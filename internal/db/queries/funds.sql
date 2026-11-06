@@ -54,7 +54,7 @@ UPDATE fund_member SET role = $3 WHERE fund_id = $1 AND user_id = $2;
 -- name: CountMembersAndInvites :one
 SELECT (
   (SELECT count(*) FROM fund_member fm WHERE fm.fund_id = sqlc.arg(fund_id))
-  + (SELECT count(*) FROM fund_invite fi WHERE fi.fund_id = sqlc.arg(fund_id))
+  + (SELECT count(*) FROM fund_invite fi WHERE fi.fund_id = sqlc.arg(fund_id) AND fi.expires_at > now())
 )::int;
 
 -- name: ListPaydays :many
@@ -95,7 +95,7 @@ DELETE FROM payday_amount WHERE fund_id = $1 AND date = sqlc.arg(date)::date;
 SELECT date::text AS date FROM payday_amount WHERE fund_id = $1 ORDER BY date;
 
 -- name: GetReminderPref :one
-SELECT enabled, COALESCE(last_reminder_on::text, '') AS last_reminder_on
+SELECT enabled, COALESCE(last_reminder_on::text, '')::text AS last_reminder_on
 FROM fund_reminder_pref WHERE fund_id = $1 AND user_id = $2;
 
 -- name: UpsertReminderPref :exec
@@ -107,7 +107,7 @@ UPDATE fund_reminder_pref SET last_reminder_on = sqlc.arg(sent_on)::date
 WHERE fund_id = $1 AND user_id = $2;
 
 -- name: ListReminderRecipients :many
-SELECT p.fund_id, p.user_id, COALESCE(p.last_reminder_on::text, '') AS last_reminder_on,
+SELECT p.fund_id, p.user_id, COALESCE(p.last_reminder_on::text, '')::text AS last_reminder_on,
        u.email, u.name AS user_name,
        f.name AS fund_name, f.pace, f.currency, f.timezone
 FROM fund_reminder_pref p
@@ -119,3 +119,14 @@ WHERE p.enabled AND u.email_verified;
 SELECT f.id, f.name,
        (SELECT count(*) FROM fund_member fm WHERE fm.fund_id = f.id)::int AS member_count
 FROM fund f WHERE f.user_id = $1 ORDER BY f.created_at, f.id;
+
+-- name: GetMemberByEmail :one
+SELECT u.id FROM "user" u JOIN fund_member m ON m.user_id = u.id
+WHERE m.fund_id = $1 AND u.email = sqlc.arg(email);
+
+-- name: ListFundsForUser :many
+SELECT f.id, f.name, f.user_id, f.created_at, 'owner'::text AS role, 0 AS ord FROM fund f WHERE f.user_id = $1
+UNION ALL
+SELECT f.id, f.name, f.user_id, f.created_at, m.role, 1 AS ord
+FROM fund_member m JOIN fund f ON f.id = m.fund_id WHERE m.user_id = $1
+ORDER BY ord, created_at, id;
