@@ -14,7 +14,7 @@ import (
 const countMembersAndInvites = `-- name: CountMembersAndInvites :one
 SELECT (
   (SELECT count(*) FROM fund_member fm WHERE fm.fund_id = $1)
-  + (SELECT count(*) FROM fund_invite fi WHERE fi.fund_id = $1)
+  + (SELECT count(*) FROM fund_invite fi WHERE fi.fund_id = $1 AND fi.expires_at > now())
 )::int
 `
 
@@ -166,8 +166,25 @@ func (q *Queries) GetMember(ctx context.Context, arg GetMemberParams) (FundMembe
 	return i, err
 }
 
+const getMemberByEmail = `-- name: GetMemberByEmail :one
+SELECT u.id FROM "user" u JOIN fund_member m ON m.user_id = u.id
+WHERE m.fund_id = $1 AND u.email = $2
+`
+
+type GetMemberByEmailParams struct {
+	FundID string
+	Email  string
+}
+
+func (q *Queries) GetMemberByEmail(ctx context.Context, arg GetMemberByEmailParams) (string, error) {
+	row := q.db.QueryRow(ctx, getMemberByEmail, arg.FundID, arg.Email)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getReminderPref = `-- name: GetReminderPref :one
-SELECT enabled, COALESCE(last_reminder_on::text, '') AS last_reminder_on
+SELECT enabled, COALESCE(last_reminder_on::text, '')::text AS last_reminder_on
 FROM fund_reminder_pref WHERE fund_id = $1 AND user_id = $2
 `
 
@@ -178,7 +195,7 @@ type GetReminderPrefParams struct {
 
 type GetReminderPrefRow struct {
 	Enabled        bool
-	LastReminderOn interface{}
+	LastReminderOn string
 }
 
 func (q *Queries) GetReminderPref(ctx context.Context, arg GetReminderPrefParams) (GetReminderPrefRow, error) {
@@ -285,6 +302,50 @@ func (q *Queries) ListAdjustments(ctx context.Context, fundID string) ([]ListAdj
 	for rows.Next() {
 		var i ListAdjustmentsRow
 		if err := rows.Scan(&i.Date, &i.Amount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFundsForUser = `-- name: ListFundsForUser :many
+SELECT f.id, f.name, f.user_id, f.created_at, 'owner'::text AS role, 0 AS ord FROM fund f WHERE f.user_id = $1
+UNION ALL
+SELECT f.id, f.name, f.user_id, f.created_at, m.role, 1 AS ord
+FROM fund_member m JOIN fund f ON f.id = m.fund_id WHERE m.user_id = $1
+ORDER BY ord, created_at, id
+`
+
+type ListFundsForUserRow struct {
+	ID        string
+	Name      string
+	UserID    string
+	CreatedAt pgtype.Timestamptz
+	Role      string
+	Ord       int32
+}
+
+func (q *Queries) ListFundsForUser(ctx context.Context, userID string) ([]ListFundsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listFundsForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListFundsForUserRow{}
+	for rows.Next() {
+		var i ListFundsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.UserID,
+			&i.CreatedAt,
+			&i.Role,
+			&i.Ord,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -420,7 +481,7 @@ func (q *Queries) ListPaydays(ctx context.Context, fundID string) ([]int32, erro
 }
 
 const listReminderRecipients = `-- name: ListReminderRecipients :many
-SELECT p.fund_id, p.user_id, COALESCE(p.last_reminder_on::text, '') AS last_reminder_on,
+SELECT p.fund_id, p.user_id, COALESCE(p.last_reminder_on::text, '')::text AS last_reminder_on,
        u.email, u.name AS user_name,
        f.name AS fund_name, f.pace, f.currency, f.timezone
 FROM fund_reminder_pref p
@@ -432,7 +493,7 @@ WHERE p.enabled AND u.email_verified
 type ListReminderRecipientsRow struct {
 	FundID         string
 	UserID         string
-	LastReminderOn interface{}
+	LastReminderOn string
 	Email          string
 	UserName       string
 	FundName       string

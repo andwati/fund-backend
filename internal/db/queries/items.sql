@@ -1,15 +1,39 @@
 -- name: ListItems :many
 SELECT id, name, price, deadline::text AS deadline, plan_start::text AS plan_start,
-       "position", archived_at, actual_price, COALESCE(purchased_on::text, '') AS purchased_on, created_at
+       "position", archived_at, actual_price, COALESCE(purchased_on::text, '')::text AS purchased_on, created_at
 FROM item WHERE fund_id = $1 ORDER BY "position", created_at, id;
 
 -- name: GetItem :one
 SELECT id, fund_id, name, price, deadline::text AS deadline, plan_start::text AS plan_start,
-       "position", archived_at, actual_price, COALESCE(purchased_on::text, '') AS purchased_on, created_at
+       "position", archived_at, actual_price, COALESCE(purchased_on::text, '')::text AS purchased_on, created_at
 FROM item WHERE id = $1 AND fund_id = $2;
 
 -- name: MaxItemPosition :one
-SELECT COALESCE(max("position"), -1)::int FROM item WHERE fund_id = $1 AND archived_at IS NULL;
+-- Web parity: new position = max(0, max over ALL items) + 1, so the first item gets 1.
+SELECT COALESCE(max("position"), 0)::int FROM item WHERE fund_id = $1;
+
+-- name: ListActiveItemIDs :many
+SELECT id FROM item WHERE fund_id = $1 AND archived_at IS NULL ORDER BY "position", created_at, id;
+
+-- name: UpdateItemsPlanStart :exec
+-- A new payday schedule applies from today: active items start their plan now.
+UPDATE item SET plan_start = sqlc.arg(today)::date
+WHERE fund_id = $1 AND archived_at IS NULL
+  AND plan_start < sqlc.arg(today)::date AND deadline >= sqlc.arg(today)::date;
+
+-- name: ListLedgerLinesForItems :many
+SELECT c.id AS contribution_id, a.item_id, c.date::text AS date, c.kind, a.amount, c.created_at
+FROM allocation a JOIN contribution c ON c.id = a.contribution_id
+WHERE c.fund_id = $1 AND a.item_id = ANY(sqlc.arg(item_ids)::text[]);
+
+-- name: ListFundItemsForContribution :many
+SELECT id, name, (archived_at IS NOT NULL)::bool AS archived FROM item WHERE fund_id = $1;
+
+-- name: ListActiveItemNames :many
+SELECT id, name FROM item WHERE fund_id = $1 AND archived_at IS NULL ORDER BY "position", created_at, id;
+
+-- name: GetItemName :one
+SELECT name FROM item WHERE id = $1;
 
 -- name: InsertItem :exec
 INSERT INTO item (id, fund_id, name, price, deadline, plan_start, "position")

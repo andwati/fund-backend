@@ -569,3 +569,27 @@ func (s *Service) DeleteAccount(ctx context.Context, user User, password string)
 	}
 	return nil
 }
+
+// StartSessionTx starts a session for an existing user inside the caller's transaction.
+// The funds layer uses it so invite sign-up is one atomic step (no half-created accounts).
+func (s *Service) StartSessionTx(ctx context.Context, tx pgx.Tx, userID, ip, ua string) (Session, error) {
+	q := s.q.WithTx(tx)
+	u, err := q.GetUserByID(ctx, userID)
+	if err != nil {
+		return Session{}, err
+	}
+	sess, err := s.newSession(ctx, q, userID, ip, ua)
+	if err != nil {
+		return Session{}, err
+	}
+	return s.toSession(sess, u), nil
+}
+
+// NormalizeEmail lower-cases and trims an address.
+func NormalizeEmail(e string) string { return normalizeEmail(e) }
+
+// ValidEmail reports whether e looks like a deliverable address.
+func ValidEmail(e string) bool { return validEmail(e) }
+
+// CheckPassword applies the password length rules (8 to 128 characters).
+func CheckPassword(p string) error { return checkPassword(p) }

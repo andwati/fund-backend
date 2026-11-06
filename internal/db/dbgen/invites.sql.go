@@ -109,6 +109,35 @@ func (q *Queries) GetInviteByToken(ctx context.Context, token string) (FundInvit
 	return i, err
 }
 
+const getInviteView = `-- name: GetInviteView :one
+SELECT i.email, i.role, i.expires_at, f.name AS fund_name, u.name AS inviter
+FROM fund_invite i
+JOIN fund f ON f.id = i.fund_id
+JOIN "user" u ON u.id = i.invited_by
+WHERE i.token = $1
+`
+
+type GetInviteViewRow struct {
+	Email     string
+	Role      string
+	ExpiresAt pgtype.Timestamptz
+	FundName  string
+	Inviter   string
+}
+
+func (q *Queries) GetInviteView(ctx context.Context, token string) (GetInviteViewRow, error) {
+	row := q.db.QueryRow(ctx, getInviteView, token)
+	var i GetInviteViewRow
+	err := row.Scan(
+		&i.Email,
+		&i.Role,
+		&i.ExpiresAt,
+		&i.FundName,
+		&i.Inviter,
+	)
+	return i, err
+}
+
 const insertInvite = `-- name: InsertInvite :exec
 INSERT INTO fund_invite (id, fund_id, email, role, token, invited_by, expires_at)
 VALUES ($1, $2, lower($7), $3, $4, $5, $6)
@@ -139,7 +168,7 @@ func (q *Queries) InsertInvite(ctx context.Context, arg InsertInviteParams) erro
 
 const listInvites = `-- name: ListInvites :many
 SELECT id, email, role, expires_at, created_at FROM fund_invite
-WHERE fund_id = $1 ORDER BY created_at, id
+WHERE fund_id = $1 AND expires_at > now() ORDER BY created_at, id
 `
 
 type ListInvitesRow struct {
@@ -177,7 +206,7 @@ func (q *Queries) ListInvites(ctx context.Context, fundID string) ([]ListInvites
 }
 
 const rotateInvite = `-- name: RotateInvite :exec
-UPDATE fund_invite SET token = $2, expires_at = $3, role = $4 WHERE id = $1
+UPDATE fund_invite SET token = $2, expires_at = $3, role = $4, invited_by = $5 WHERE id = $1
 `
 
 type RotateInviteParams struct {
@@ -185,6 +214,7 @@ type RotateInviteParams struct {
 	Token     string
 	ExpiresAt pgtype.Timestamptz
 	Role      string
+	InvitedBy string
 }
 
 func (q *Queries) RotateInvite(ctx context.Context, arg RotateInviteParams) error {
@@ -193,6 +223,7 @@ func (q *Queries) RotateInvite(ctx context.Context, arg RotateInviteParams) erro
 		arg.Token,
 		arg.ExpiresAt,
 		arg.Role,
+		arg.InvitedBy,
 	)
 	return err
 }
