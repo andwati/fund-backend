@@ -1,4 +1,4 @@
-.PHONY: run build test vet lint tidy parity sqlc
+.PHONY: run build test vet lint tidy parity parity-auth sqlc
 
 run:
 	go run ./cmd/fundd
@@ -28,3 +28,8 @@ parity:
 
 sqlc:
 	go tool sqlc generate
+
+# Go-made password hashes must verify in better-auth (Node).
+parity-auth:
+	GO_HASHES_OUT=$(CURDIR)/tmp/gohashes.json go test ./internal/auth -run WriteGoHashes -count=1
+	cd tools/parity && GO_HASHES=$(CURDIR)/tmp/gohashes.json OUT=/dev/null /home/ian/dev/fund/node_modules/.bin/vitest run --root $(CURDIR)/tools/parity gen-auth

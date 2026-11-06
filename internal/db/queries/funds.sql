@@ -114,3 +114,8 @@ FROM fund_reminder_pref p
 JOIN "user" u ON u.id = p.user_id
 JOIN fund f ON f.id = p.fund_id
 WHERE p.enabled AND u.email_verified;
+
+-- name: ListOwnedFundsWithMemberCount :many
+SELECT f.id, f.name,
+       (SELECT count(*) FROM fund_member fm WHERE fm.fund_id = f.id)::int AS member_count
+FROM fund f WHERE f.user_id = $1 ORDER BY f.created_at, f.id;

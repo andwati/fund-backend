@@ -363,6 +363,38 @@ func (q *Queries) ListOwnedFunds(ctx context.Context, userID string) ([]ListOwne
 	return items, nil
 }
 
+const listOwnedFundsWithMemberCount = `-- name: ListOwnedFundsWithMemberCount :many
+SELECT f.id, f.name,
+       (SELECT count(*) FROM fund_member fm WHERE fm.fund_id = f.id)::int AS member_count
+FROM fund f WHERE f.user_id = $1 ORDER BY f.created_at, f.id
+`
+
+type ListOwnedFundsWithMemberCountRow struct {
+	ID          string
+	Name        string
+	MemberCount int32
+}
+
+func (q *Queries) ListOwnedFundsWithMemberCount(ctx context.Context, userID string) ([]ListOwnedFundsWithMemberCountRow, error) {
+	rows, err := q.db.Query(ctx, listOwnedFundsWithMemberCount, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListOwnedFundsWithMemberCountRow{}
+	for rows.Next() {
+		var i ListOwnedFundsWithMemberCountRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.MemberCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPaydays = `-- name: ListPaydays :many
 SELECT day FROM fund_payday WHERE fund_id = $1 ORDER BY day
 `
