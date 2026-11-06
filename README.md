@@ -59,6 +59,8 @@ The Go port is checked against the web app's real code (needs `~/dev/fund` with 
 | `make parity-db` | The web app's real server functions seed a database; Go's payload for the owner and a viewer is identical to the web app's `loadFund()` |
 | `make parity-db-go` | Go seeds a database; the web app's real code reads it identically, mutates it, and Go reads those changes |
 
+The parity targets expect the Postgres container from the Develop section (override the name with `PG_CONTAINER=...`).
+
 Known, deliberate differences are in `PARITY_NOTES.md`.
 
 ## Cutover from the Next.js app
