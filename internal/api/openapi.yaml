@@ -1,0 +1,182 @@
+openapi: 3.1.0
+info:
+  title: Fund API
+  version: 1.0.0
+  description: |
+    REST API for Fund (savings planner). Authenticate with `Authorization: Bearer <session token>`
+    from the sign-in/sign-up responses. Every fund mutation returns the fresh fund payload
+    (`{ ok: true, payload }`); failures are `{ ok: false, error, status }` with the same HTTP status.
+    Contribution creates are idempotent by a client-supplied UUID `id`: a retry with the same body
+    is a no-op, with a different body it is a 409. The offline queue should pause on 401, mark other
+    4xx as failed, and retry 5xx/network errors.
+servers:
+  - url: http://localhost:4000
+security:
+  - bearer: []
+tags:
+  - name: auth
+  - name: funds
+  - name: items
+  - name: contributions
+  - name: paydays
+  - name: sharing
+  - name: exports
+  - name: ops
+paths:
+  /healthz:
+    get: { tags: [ops], summary: Liveness, security: [], responses: { "200": { $ref: "#/components/responses/Ok" } } }
+  /readyz:
+    get: { tags: [ops], summary: Readiness (database ping), security: [], responses: { "200": { $ref: "#/components/responses/Ok" }, "503": { $ref: "#/components/responses/Error" } } }
+  /openapi.yaml:
+    get: { tags: [ops], summary: This document, security: [], responses: { "200": { description: OpenAPI YAML } } }
+  /cron/reminders:
+    get: { tags: [ops], summary: Send payday reminders (cron secret), security: [{ cron: [] }], responses: { "200": { $ref: "#/components/responses/ReminderRun" }, "401": { $ref: "#/components/responses/Error" }, "404": { $ref: "#/components/responses/Error" } } }
+    post: { tags: [ops], summary: Send payday reminders (cron secret), security: [{ cron: [] }], responses: { "200": { $ref: "#/components/responses/ReminderRun" }, "401": { $ref: "#/components/responses/Error" }, "404": { $ref: "#/components/responses/Error" } } }
+  /unsubscribe/reminders:
+    get: { tags: [ops], summary: Turn reminders off from an email link, security: [], parameters: [{ $ref: "#/components/parameters/Token" }], responses: { "200": { description: HTML confirmation }, "400": { $ref: "#/components/responses/Error" } } }
+    post: { tags: [ops], summary: RFC 8058 one-click unsubscribe (form body List-Unsubscribe=One-Click), security: [], parameters: [{ $ref: "#/components/parameters/Token" }], responses: { "200": { description: HTML confirmation }, "400": { $ref: "#/components/responses/Error" } } }
+
+  /auth/sign-up:
+    post: { tags: [auth], summary: Create an account and its first session, security: [], requestBody: { $ref: "#/components/requestBodies/SignUp" }, responses: { "200": { $ref: "#/components/responses/Session" }, "400": { $ref: "#/components/responses/Error" }, "422": { $ref: "#/components/responses/Error" }, "429": { $ref: "#/components/responses/Error" } } }
+  /auth/sign-in:
+    post: { tags: [auth], summary: Sign in with email and password, security: [], requestBody: { $ref: "#/components/requestBodies/SignIn" }, responses: { "200": { $ref: "#/components/responses/Session" }, "401": { $ref: "#/components/responses/Error" }, "429": { $ref: "#/components/responses/Error" } } }
+  /auth/sign-out:
+    post: { tags: [auth], summary: End the current session, responses: { "200": { $ref: "#/components/responses/Ok" }, "401": { $ref: "#/components/responses/Error" } } }
+  /auth/session:
+    get: { tags: [auth], summary: The current session and user, responses: { "200": { $ref: "#/components/responses/Session" }, "401": { $ref: "#/components/responses/Error" } } }
+  /auth/sessions:
+    get: { tags: [auth], summary: List active sessions, responses: { "200": { description: Sessions, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, sessions: { type: array, items: { $ref: "#/components/schemas/SessionInfo" } } } } } } }, "401": { $ref: "#/components/responses/Error" } } }
+  /auth/sessions/{id}:
+    delete: { tags: [auth], summary: Revoke one of your sessions, parameters: [{ name: id, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: "#/components/responses/Ok" }, "401": { $ref: "#/components/responses/Error" } } }
+  /auth/sessions/revoke-others:
+    post: { tags: [auth], summary: Revoke every session except the current one, responses: { "200": { $ref: "#/components/responses/Ok" }, "401": { $ref: "#/components/responses/Error" } } }
+  /auth/verify-email:
+    post: { tags: [auth], summary: Redeem an email link token (verify, approve or finish an email change), security: [], requestBody: { $ref: "#/components/requestBodies/Token" }, responses: { "200": { description: "status is verified (token returned: auto sign-in), confirmation-sent or email-changed", content: { application/json: { schema: { type: object } } } }, "400": { $ref: "#/components/responses/Error" } } }
+  /auth/send-verification-email:
+    post: { tags: [auth], summary: Re-send the verification link (same answer for unknown addresses), security: [], requestBody: { $ref: "#/components/requestBodies/Email" }, responses: { "200": { $ref: "#/components/responses/Ok" }, "429": { $ref: "#/components/responses/Error" } } }
+  /auth/request-password-reset:
+    post: { tags: [auth], summary: Email a password reset link (same answer for unknown addresses), security: [], requestBody: { $ref: "#/components/requestBodies/Email" }, responses: { "200": { $ref: "#/components/responses/Ok" }, "429": { $ref: "#/components/responses/Error" } } }
+  /auth/reset-password:
+    post: { tags: [auth], summary: Set a new password with a reset token (single use, 1 hour), security: [], requestBody: { content: { application/json: { schema: { type: object, required: [token, password], properties: { token: { type: string }, password: { type: string, minLength: 8, maxLength: 128 } } } } } }, responses: { "200": { $ref: "#/components/responses/Ok" }, "400": { $ref: "#/components/responses/Error" } } }
+  /auth/change-password:
+    post: { tags: [auth], summary: Change password, requestBody: { content: { application/json: { schema: { type: object, required: [currentPassword, newPassword], properties: { currentPassword: { type: string }, newPassword: { type: string }, revokeOtherSessions: { type: boolean } } } } } }, responses: { "200": { $ref: "#/components/responses/Ok" }, "400": { $ref: "#/components/responses/Error" }, "401": { $ref: "#/components/responses/Error" } } }
+  /auth/change-email:
+    post: { tags: [auth], summary: Start an email change, requestBody: { content: { application/json: { schema: { type: object, required: [newEmail], properties: { newEmail: { type: string, format: email } } } } } }, responses: { "200": { $ref: "#/components/responses/Ok" }, "400": { $ref: "#/components/responses/Error" }, "422": { $ref: "#/components/responses/Error" } } }
+  /auth/profile:
+    patch: { tags: [auth], summary: Update display name or image, requestBody: { content: { application/json: { schema: { type: object, properties: { name: { type: string }, image: { type: [string, "null"] } } } } } }, responses: { "200": { description: Updated user, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, user: { $ref: "#/components/schemas/User" } } } } } }, "400": { $ref: "#/components/responses/Error" } } }
+  /auth/account:
+    delete: { tags: [auth], summary: Delete the account (password required), requestBody: { content: { application/json: { schema: { type: object, required: [password], properties: { password: { type: string } } } } } }, responses: { "200": { $ref: "#/components/responses/Ok" }, "400": { $ref: "#/components/responses/Error" }, "409": { description: An owned fund still has members, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } } } }
+  /account/export:
+    get: { tags: [exports], summary: "Zip of your data (5 per hour)", responses: { "200": { description: Zip archive, content: { application/zip: { schema: { type: string, format: binary } } } }, "429": { $ref: "#/components/responses/Error" } } }
+
+  /funds:
+    get: { tags: [funds], summary: Funds you can open (creates a default fund on first use), responses: { "200": { description: Fund list, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, funds: { type: array, items: { $ref: "#/components/schemas/FundSummary" } } } } } } }, "401": { $ref: "#/components/responses/Error" }, "403": { $ref: "#/components/responses/Error" } } }
+    post: { tags: [funds], summary: Create a fund (max 10 owned), requestBody: { content: { application/json: { schema: { type: object, required: [name], properties: { name: { type: string, maxLength: 80 } } } } } }, responses: { "200": { $ref: "#/components/responses/Payload" }, "400": { $ref: "#/components/responses/Error" } } }
+  /funds/{fundId}:
+    get: { tags: [funds], summary: The fund payload, parameters: [{ $ref: "#/components/parameters/FundId" }], responses: { "200": { $ref: "#/components/responses/Payload" }, "404": { $ref: "#/components/responses/Error" } } }
+    patch: { tags: [funds], summary: Update settings (owner), parameters: [{ $ref: "#/components/parameters/FundId" }], requestBody: { content: { application/json: { schema: { $ref: "#/components/schemas/FundPatch" } } } }, responses: { "200": { $ref: "#/components/responses/Payload" }, "400": { $ref: "#/components/responses/Error" }, "403": { $ref: "#/components/responses/Error" } } }
+    delete: { tags: [funds], summary: Delete the fund and everything in it (owner), parameters: [{ $ref: "#/components/parameters/FundId" }], responses: { "200": { $ref: "#/components/responses/Ok" }, "403": { $ref: "#/components/responses/Error" } } }
+  /funds/{fundId}/leave:
+    post: { tags: [sharing], summary: Leave a fund you were added to, parameters: [{ $ref: "#/components/parameters/FundId" }], responses: { "200": { $ref: "#/components/responses/Ok" }, "400": { $ref: "#/components/responses/Error" } } }
+  /funds/{fundId}/onboarding/complete:
+    post: { tags: [funds], summary: Mark onboarding done (owner), parameters: [{ $ref: "#/components/parameters/FundId" }], responses: { "200": { $ref: "#/components/responses/Payload" } } }
+  /funds/{fundId}/reminders:
+    put: { tags: [funds], summary: Opt yourself in or out of payday emails, parameters: [{ $ref: "#/components/parameters/FundId" }], requestBody: { content: { application/json: { schema: { type: object, required: [enabled], properties: { enabled: { type: boolean } } } } } }, responses: { "200": { $ref: "#/components/responses/Payload" } } }
+
+  /funds/{fundId}/paydays/{date}/skip:
+    post: { tags: [paydays], summary: Skip an upcoming payday (editor), parameters: [{ $ref: "#/components/parameters/FundId" }, { $ref: "#/components/parameters/Date" }], responses: { "200": { $ref: "#/components/responses/Payload" }, "400": { $ref: "#/components/responses/Error" } } }
+    delete: { tags: [paydays], summary: Restore a skipped payday (editor), parameters: [{ $ref: "#/components/parameters/FundId" }, { $ref: "#/components/parameters/Date" }], responses: { "200": { $ref: "#/components/responses/Payload" } } }
+  /funds/{fundId}/paydays/{date}/amount:
+    put: { tags: [paydays], summary: Set the expected saving for one upcoming payday (editor), parameters: [{ $ref: "#/components/parameters/FundId" }, { $ref: "#/components/parameters/Date" }], requestBody: { content: { application/json: { schema: { type: object, required: [amount], properties: { amount: { type: integer, minimum: 1, maximum: 1000000000 } } } } } }, responses: { "200": { $ref: "#/components/responses/Payload" }, "400": { $ref: "#/components/responses/Error" } } }
+    delete: { tags: [paydays], summary: Clear an adjusted amount (editor), parameters: [{ $ref: "#/components/parameters/FundId" }, { $ref: "#/components/parameters/Date" }], responses: { "200": { $ref: "#/components/responses/Payload" } } }
+
+  /funds/{fundId}/items:
+    post: { tags: [items], summary: Add an item (editor), parameters: [{ $ref: "#/components/parameters/FundId" }], requestBody: { content: { application/json: { schema: { $ref: "#/components/schemas/ItemInput" } } } }, responses: { "200": { $ref: "#/components/responses/Payload" }, "400": { $ref: "#/components/responses/Error" } } }
+  /funds/{fundId}/items/{itemId}:
+    patch: { tags: [items], summary: Edit an item (editor), parameters: [{ $ref: "#/components/parameters/FundId" }, { $ref: "#/components/parameters/ItemId" }], requestBody: { content: { application/json: { schema: { $ref: "#/components/schemas/ItemPatch" } } } }, responses: { "200": { $ref: "#/components/responses/Payload" }, "404": { $ref: "#/components/responses/Error" } } }
+    delete: { tags: [items], summary: Delete an item without contributions (editor), parameters: [{ $ref: "#/components/parameters/FundId" }, { $ref: "#/components/parameters/ItemId" }], responses: { "200": { $ref: "#/components/responses/Payload" }, "409": { $ref: "#/components/responses/Error" } } }
+  /funds/{fundId}/items/{itemId}/archive:
+    post: { tags: [items], summary: Mark purchased (archived with price and date) or restore, parameters: [{ $ref: "#/components/parameters/FundId" }, { $ref: "#/components/parameters/ItemId" }], requestBody: { content: { application/json: { schema: { type: object, properties: { archived: { type: boolean, default: true }, purchase: { type: object, required: [actualPrice, purchasedOn], properties: { actualPrice: { type: integer }, purchasedOn: { type: string, format: date } } } } } } } }, responses: { "200": { $ref: "#/components/responses/Payload" } } }
+  /funds/{fundId}/items/{itemId}/move:
+    post: { tags: [items], summary: Swap with a neighbour, parameters: [{ $ref: "#/components/parameters/FundId" }, { $ref: "#/components/parameters/ItemId" }], requestBody: { content: { application/json: { schema: { type: object, required: [direction], properties: { direction: { enum: [up, down] } } } } } }, responses: { "200": { $ref: "#/components/responses/Payload" } } }
+  /funds/{fundId}/items/{itemId}/reorder:
+    post: { tags: [items], summary: Move to a zero-based index among active items, parameters: [{ $ref: "#/components/parameters/FundId" }, { $ref: "#/components/parameters/ItemId" }], requestBody: { content: { application/json: { schema: { type: object, required: [toIndex], properties: { toIndex: { type: integer } } } } } }, responses: { "200": { $ref: "#/components/responses/Payload" } } }
+
+  /funds/{fundId}/contributions:
+    post: { tags: [contributions], summary: Record a deposit or withdrawal (editor; idempotent by id), parameters: [{ $ref: "#/components/parameters/FundId" }], requestBody: { content: { application/json: { schema: { $ref: "#/components/schemas/ContributionInput" } } } }, responses: { "200": { $ref: "#/components/responses/Payload" }, "400": { $ref: "#/components/responses/Error" }, "409": { $ref: "#/components/responses/Error" } } }
+  /funds/{fundId}/contributions/import:
+    post: { tags: [contributions], summary: Import contributions from CSV text (all or nothing, max 2000 rows), parameters: [{ $ref: "#/components/parameters/FundId" }], requestBody: { content: { application/json: { schema: { type: object, required: [csv], properties: { csv: { type: string } } } } } }, responses: { "200": { $ref: "#/components/responses/Payload" }, "400": { $ref: "#/components/responses/Error" } } }
+  /funds/{fundId}/contributions/{contributionId}:
+    patch: { tags: [contributions], summary: Replace a contribution (editor), parameters: [{ $ref: "#/components/parameters/FundId" }, { name: contributionId, in: path, required: true, schema: { type: string } }], requestBody: { content: { application/json: { schema: { $ref: "#/components/schemas/ContributionInput" } } } }, responses: { "200": { $ref: "#/components/responses/Payload" }, "400": { $ref: "#/components/responses/Error" } } }
+    delete: { tags: [contributions], summary: Delete a contribution (editor), parameters: [{ $ref: "#/components/parameters/FundId" }, { name: contributionId, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: "#/components/responses/Payload" }, "400": { $ref: "#/components/responses/Error" } } }
+
+  /funds/{fundId}/invites:
+    post: { tags: [sharing], summary: Invite by email (owner), parameters: [{ $ref: "#/components/parameters/FundId" }], requestBody: { content: { application/json: { schema: { type: object, required: [email, role], properties: { email: { type: string, format: email }, role: { enum: [editor, viewer] } } } } } }, responses: { "200": { $ref: "#/components/responses/Payload" }, "429": { $ref: "#/components/responses/Error" }, "502": { $ref: "#/components/responses/Error" } } }
+  /funds/{fundId}/invites/{inviteId}/resend:
+    post: { tags: [sharing], summary: Rotate the invite token and email it again (owner), parameters: [{ $ref: "#/components/parameters/FundId" }, { name: inviteId, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: "#/components/responses/Payload" }, "410": { $ref: "#/components/responses/Error" } } }
+  /funds/{fundId}/invites/{inviteId}:
+    delete: { tags: [sharing], summary: Revoke an invite (owner), parameters: [{ $ref: "#/components/parameters/FundId" }, { name: inviteId, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: "#/components/responses/Payload" } } }
+  /funds/{fundId}/members/{userId}:
+    patch: { tags: [sharing], summary: Change a member's role (owner), parameters: [{ $ref: "#/components/parameters/FundId" }, { name: userId, in: path, required: true, schema: { type: string } }], requestBody: { content: { application/json: { schema: { type: object, required: [role], properties: { role: { enum: [editor, viewer] } } } } } }, responses: { "200": { $ref: "#/components/responses/Payload" } } }
+    delete: { tags: [sharing], summary: Remove a member (owner), parameters: [{ $ref: "#/components/parameters/FundId" }, { name: userId, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: "#/components/responses/Payload" } } }
+  /funds/{fundId}/transfer-ownership:
+    post: { tags: [sharing], summary: Hand the fund to an editor (owner), parameters: [{ $ref: "#/components/parameters/FundId" }], requestBody: { content: { application/json: { schema: { type: object, required: [userId], properties: { userId: { type: string } } } } } }, responses: { "200": { $ref: "#/components/responses/Payload" }, "502": { $ref: "#/components/responses/Error" } } }
+  /invites/{token}:
+    get: { tags: [sharing], summary: What the invite page shows (state invalid|expired|ok), security: [], parameters: [{ name: token, in: path, required: true, schema: { type: string } }], responses: { "200": { description: Invite info, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, invite: { $ref: "#/components/schemas/InviteInfo" } } } } } } } }
+  /invites/{token}/accept:
+    post: { tags: [sharing], summary: Join with the signed-in account (email must match), parameters: [{ name: token, in: path, required: true, schema: { type: string } }], responses: { "200": { $ref: "#/components/responses/Payload" }, "403": { $ref: "#/components/responses/Error" }, "410": { $ref: "#/components/responses/Error" } } }
+  /invites/{token}/accept-signup:
+    post: { tags: [sharing], summary: Create or claim an account from an invite, join, and get a session in one step, security: [], parameters: [{ name: token, in: path, required: true, schema: { type: string } }], requestBody: { content: { application/json: { schema: { type: object, required: [name, password], properties: { name: { type: string }, password: { type: string, minLength: 8, maxLength: 128 } } } } } }, responses: { "200": { description: Session plus the joined fund id, content: { application/json: { schema: { type: object, properties: { ok: { type: boolean }, fundId: { type: string }, token: { type: string }, expiresAt: { type: string, format: date-time }, user: { $ref: "#/components/schemas/User" } } } } } }, "409": { $ref: "#/components/responses/Error" } } }
+
+  /funds/{fundId}/export/contributions.csv:
+    get: { tags: [exports], summary: Contributions CSV (any role), parameters: [{ $ref: "#/components/parameters/FundId" }], responses: { "200": { description: CSV, content: { text/csv: { schema: { type: string } } } } } }
+  /funds/{fundId}/export/items.csv:
+    get: { tags: [exports], summary: Items CSV (any role), parameters: [{ $ref: "#/components/parameters/FundId" }], responses: { "200": { description: CSV, content: { text/csv: { schema: { type: string } } } } } }
+  /funds/{fundId}/export/schedule.ics:
+    get: { tags: [exports], summary: Upcoming paydays as calendar events (any role), parameters: [{ $ref: "#/components/parameters/FundId" }], responses: { "200": { description: iCalendar, content: { text/calendar: { schema: { type: string } } } } } }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+    cron: { type: http, scheme: bearer, description: "CRON_SECRET" }
+  parameters:
+    FundId: { name: fundId, in: path, required: true, schema: { type: string } }
+    ItemId: { name: itemId, in: path, required: true, schema: { type: string } }
+    Date: { name: date, in: path, required: true, schema: { type: string, format: date }, description: YYYY-MM-DD }
+    Token: { name: token, in: query, schema: { type: string } }
+  requestBodies:
+    SignUp: { required: true, content: { application/json: { schema: { type: object, required: [name, email, password], properties: { name: { type: string, maxLength: 80 }, email: { type: string, format: email }, password: { type: string, minLength: 8, maxLength: 128 } } } } } }
+    SignIn: { required: true, content: { application/json: { schema: { type: object, required: [email, password], properties: { email: { type: string, format: email }, password: { type: string } } } } } }
+    Email: { required: true, content: { application/json: { schema: { type: object, required: [email], properties: { email: { type: string, format: email } } } } } }
+    Token: { required: true, content: { application/json: { schema: { type: object, required: [token], properties: { token: { type: string } } } } } }
+  responses:
+    Ok: { description: Done, content: { application/json: { schema: { type: object, required: [ok], properties: { ok: { type: boolean } } } } } }
+    Error: { description: Failure, content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+    Session: { description: A session, content: { application/json: { schema: { $ref: "#/components/schemas/SessionResponse" } } } }
+    Payload: { description: The fresh fund payload, content: { application/json: { schema: { type: object, required: [ok, payload], properties: { ok: { type: boolean }, payload: { $ref: "#/components/schemas/FundPayload" } } } } } }
+    ReminderRun: { description: What the run did, content: { application/json: { schema: { type: object, properties: { checked: { type: integer }, sent: { type: integer } } } } } }
+  schemas:
+    Error: { type: object, required: [ok, error, status], properties: { ok: { const: false }, error: { type: string }, status: { type: integer } } }
+    User: { type: object, properties: { id: { type: string }, name: { type: string }, email: { type: string }, emailVerified: { type: boolean }, image: { type: [string, "null"] }, joinedViaInvite: { type: boolean }, createdAt: { type: string, format: date-time } } }
+    SessionResponse: { type: object, properties: { ok: { type: boolean }, token: { type: string }, expiresAt: { type: string, format: date-time }, user: { $ref: "#/components/schemas/User" } } }
+    SessionInfo: { type: object, properties: { id: { type: string }, createdAt: { type: string, format: date-time }, updatedAt: { type: string, format: date-time }, expiresAt: { type: string, format: date-time }, ipAddress: { type: [string, "null"] }, userAgent: { type: [string, "null"] }, current: { type: boolean } } }
+    Role: { enum: [owner, editor, viewer] }
+    FundSummary: { type: object, properties: { id: { type: string }, name: { type: string }, role: { $ref: "#/components/schemas/Role" } } }
+    FundPatch: { type: object, properties: { name: { type: string, maxLength: 80 }, paydays: { type: array, minItems: 1, maxItems: 4, items: { type: integer, minimum: 1, maximum: 31 }, description: "31 = last day of the month" }, pace: { type: [integer, "null"], minimum: 0, maximum: 1000000000, description: "0 or null clears the pace" }, currency: { type: string, maxLength: 8 }, timezone: { type: string, description: IANA zone }, timezoneConfirmed: { type: boolean }, onboardingCompleted: { type: boolean } } }
+    ItemInput: { type: object, required: [name, price, deadline], properties: { name: { type: string, maxLength: 80 }, price: { type: integer, minimum: 1, maximum: 1000000000 }, deadline: { type: string, format: date } } }
+    ItemPatch: { type: object, properties: { name: { type: string }, price: { type: integer }, deadline: { type: string, format: date }, replanFromToday: { type: boolean } } }
+    ContributionInput: { type: object, required: [date, allocations], properties: { id: { type: string, format: uuid, description: Idempotency key }, date: { type: string, format: date }, note: { type: string, maxLength: 80 }, kind: { enum: [deposit, withdrawal] }, allocations: { type: array, minItems: 1, items: { type: object, required: [itemId, amount], properties: { itemId: { type: string }, amount: { type: integer, minimum: 1, maximum: 1000000000 } } } } } }
+    InviteInfo: { type: object, properties: { state: { enum: [invalid, expired, ok] }, fundName: { type: string }, role: { enum: [editor, viewer] }, email: { type: string }, inviter: { type: string }, account: { enum: [none, unverified, verified] } } }
+    FundPayload:
+      type: object
+      required: [role, funds, sharing, fund, needsOnboarding, skips, adjustments, items, contributions]
+      properties:
+        role: { $ref: "#/components/schemas/Role" }
+        funds: { type: array, items: { $ref: "#/components/schemas/FundSummary" } }
+        sharing: { description: Owner only, oneOf: [{ type: "null" }, { type: object, properties: { members: { type: array, items: { type: object, properties: { userId: { type: string }, name: { type: string }, email: { type: string }, role: { enum: [editor, viewer] } } } }, invites: { type: array, items: { type: object, properties: { id: { type: string }, email: { type: string }, role: { enum: [editor, viewer] }, expiresAt: { type: string, format: date-time } } } } } }] }
+        fund: { type: object, properties: { id: { type: string }, name: { type: string }, paydays: { type: array, items: { type: integer } }, pace: { type: [integer, "null"] }, currency: { type: string }, timezone: { type: string }, timezoneConfirmed: { type: boolean }, onboardingCompleted: { type: boolean }, remindersEnabled: { type: boolean } } }
+        needsOnboarding: { type: boolean }
+        skips: { type: array, items: { type: string, format: date }, description: Skipped paydays from today on }
+        adjustments: { type: array, items: { type: object, properties: { date: { type: string, format: date }, amount: { type: integer } } } }
+        items: { type: array, items: { type: object, properties: { id: { type: string }, name: { type: string }, price: { type: integer }, deadline: { type: string, format: date }, planStart: { type: string, format: date }, position: { type: integer }, archived: { type: boolean }, actualPrice: { type: [integer, "null"] }, purchasedOn: { type: [string, "null"] } } } }
+        contributions: { type: array, items: { type: object, properties: { id: { type: string }, date: { type: string, format: date }, note: { type: string }, kind: { enum: [deposit, withdrawal] }, allocations: { type: array, items: { type: object, properties: { id: { type: string }, itemId: { type: string }, amount: { type: integer } } } } } } }
