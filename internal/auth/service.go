@@ -127,7 +127,7 @@ func checkPassword(p string) error {
 
 func toUser(u dbgen.User) User {
 	return User{ID: u.ID, Name: u.Name, Email: u.Email, EmailVerified: u.EmailVerified, Image: u.Image,
-		JoinedViaInvite: u.JoinedViaInvite, CreatedAt: u.CreatedAt.Time}
+		JoinedViaInvite: u.JoinedViaInvite, CreatedAt: u.CreatedAt.Time.UTC()}
 }
 
 func isUnique(err error) bool {
@@ -199,7 +199,7 @@ func (s *Service) SignUp(ctx context.Context, name, email, password, ip, ua stri
 }
 
 func (s *Service) toSession(sess dbgen.Session, u dbgen.User) Session {
-	return Session{ID: sess.ID, Token: sess.Token, ExpiresAt: sess.ExpiresAt.Time, User: toUser(u)}
+	return Session{ID: sess.ID, Token: sess.Token, ExpiresAt: sess.ExpiresAt.Time.UTC(), User: toUser(u)}
 }
 
 // SignIn checks the password and starts a session.
@@ -245,7 +245,7 @@ func (s *Service) GetSession(ctx context.Context, token string) (*Session, error
 	if err != nil {
 		return nil, err
 	}
-	expires := row.ExpiresAt.Time
+	expires := row.ExpiresAt.Time.UTC()
 	now := s.now()
 	if !expires.Add(-sessionTTL).Add(sessionUpdateAge).After(now) {
 		expires = now.Add(sessionTTL)
@@ -254,9 +254,9 @@ func (s *Service) GetSession(ctx context.Context, token string) (*Session, error
 		}
 	}
 	return &Session{
-		ID: row.SessionID, Token: row.Token, ExpiresAt: expires,
+		ID: row.SessionID, Token: row.Token, ExpiresAt: expires.UTC(),
 		User: User{ID: row.UserID, Name: row.Name, Email: row.Email, EmailVerified: row.EmailVerified,
-			Image: row.Image, JoinedViaInvite: row.JoinedViaInvite, CreatedAt: row.UserCreatedAt.Time},
+			Image: row.Image, JoinedViaInvite: row.JoinedViaInvite, CreatedAt: row.UserCreatedAt.Time.UTC()},
 	}, nil
 }
 
@@ -281,8 +281,8 @@ func (s *Service) ListSessions(ctx context.Context, userID, currentToken string)
 	}
 	out := make([]SessionInfo, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, SessionInfo{ID: r.ID, CreatedAt: r.CreatedAt.Time, UpdatedAt: r.UpdatedAt.Time,
-			ExpiresAt: r.ExpiresAt.Time, IPAddress: r.IpAddress, UserAgent: r.UserAgent, Current: r.Token == currentToken})
+		out = append(out, SessionInfo{ID: r.ID, CreatedAt: r.CreatedAt.Time.UTC(), UpdatedAt: r.UpdatedAt.Time.UTC(),
+			ExpiresAt: r.ExpiresAt.Time.UTC(), IPAddress: r.IpAddress, UserAgent: r.UserAgent, Current: r.Token == currentToken})
 	}
 	return out, nil
 }

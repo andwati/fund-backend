@@ -13,11 +13,21 @@ type Config struct {
 	Port        string
 	DatabaseURL string
 	AuthSecret  string
-	PublicURL   string
+	PublicURL   string // the client app: links in emails
+	APIURL      string // this API: unsubscribe links (defaults to PUBLIC_URL)
 	ResendKey   string
 	EmailFrom   string
 	CronSecret  string
 	LogLevel    slog.Level
+	// CORSOrigins are browser origins allowed to call the API (the Expo web app).
+	CORSOrigins []string
+	// TrustProxy reads the client IP from X-Forwarded-For / X-Real-IP (set false if not behind a proxy).
+	TrustProxy bool
+	// RateLimit enables the per-IP auth route limits (off in tests).
+	RateLimit bool
+	// MigrateOnStart applies pending migrations at boot. Leave off until `fund-migrate baseline` has
+	// been run on a database created by the web app.
+	MigrateOnStart bool
 }
 
 // Load reads configuration using getenv (os.Getenv in production).
@@ -31,6 +41,16 @@ func Load(getenv func(string) string) (Config, error) {
 		EmailFrom:   getenv("EMAIL_FROM"),
 		CronSecret:  getenv("CRON_SECRET"),
 	}
+
+	c.APIURL = strings.TrimRight(orDefault(getenv("API_URL"), c.PublicURL), "/")
+	for _, o := range strings.Split(getenv("CORS_ORIGINS"), ",") {
+		if o = strings.TrimRight(strings.TrimSpace(o), "/"); o != "" {
+			c.CORSOrigins = append(c.CORSOrigins, o)
+		}
+	}
+	c.TrustProxy = boolEnv(getenv("TRUST_PROXY"), true)
+	c.RateLimit = boolEnv(getenv("RATE_LIMIT"), true)
+	c.MigrateOnStart = boolEnv(getenv("MIGRATE_ON_START"), false)
 
 	var errs []error
 	if c.DatabaseURL == "" {
@@ -56,4 +76,14 @@ func orDefault(v, d string) string {
 		return d
 	}
 	return v
+}
+
+func boolEnv(v string, def bool) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	return def
 }
